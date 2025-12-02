@@ -11,7 +11,14 @@ class AiController extends Controller
     // Display the app and list saved items
     public function index()
     {
-        $savedTexts = DB::table('saved_texts')->orderBy('created_at', 'desc')->get();
+        // Fetch saved texts from the database
+        // We use try-catch to prevent crashing if the table is missing
+        try {
+            $savedTexts = DB::table('saved_texts')->orderBy('created_at', 'desc')->get();
+        } catch (\Exception $e) {
+            $savedTexts = [];
+        }
+        
         return view('ai-app', ['savedTexts' => $savedTexts]);
     }
 
@@ -21,8 +28,14 @@ class AiController extends Controller
         $request->validate([
             'text' => 'required|string',
             'action' => 'required|string',
-            'api_key' => 'required|string',
         ]);
+
+        // GET KEY FROM ENV (Server-side secure)
+        $apiKey = env('GEMINI_API_KEY');
+
+        if (!$apiKey) {
+            return response()->json(['error' => 'API Key not configured on server.'], 500);
+        }
 
         $prompts = [
             'pro' => "Rewrite this to be professional and polite for a business context:",
@@ -33,10 +46,10 @@ class AiController extends Controller
 
         $systemPrompt = $prompts[$request->action] ?? "Rewrite this text:";
         
-        // Call Google Gemini API using Laravel's HTTP Client
+        // Call Google Gemini API
         $response = Http::withHeaders([
             'Content-Type' => 'application/json',
-        ])->post("[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=){$request->api_key}", [
+        ])->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={$apiKey}", [
             'contents' => [
                 ['parts' => [['text' => $request->text]]]
             ],
@@ -50,19 +63,23 @@ class AiController extends Controller
             return response()->json(['result' => $generatedText]);
         }
 
-        return response()->json(['error' => 'API Call Failed'], 500);
+        return response()->json(['error' => 'API Call Failed: ' . $response->body()], 500);
     }
 
     // Save to Database
     public function save(Request $request)
     {
-        DB::table('saved_texts')->insert([
-            'original_text' => $request->original_text,
-            'generated_text' => $request->generated_text,
-            'type' => $request->action,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        try {
+            DB::table('saved_texts')->insert([
+                'original_text' => $request->original_text,
+                'generated_text' => $request->generated_text,
+                'type' => $request->action,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (\Exception $e) {
+            return redirect()->back()->with('error', 'Failed to save: ' . $e->getMessage());
+        }
 
         return redirect()->back();
     }
